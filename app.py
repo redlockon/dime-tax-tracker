@@ -243,6 +243,18 @@ def dashboard():
     total_div_thb = sum(t.total_thb for t in ytd_divs if t.is_assessable)
     total_wht_thb = sum(t.withholding_tax_thb or 0 for t in ytd_divs if t.is_assessable)
 
+    # Pre-compute position summaries so templates don't need complex filters
+    position_summaries = []
+    for symbol, lots in sorted(positions.items()):
+        total_qty = sum(lot['qty'] for lot in lots)
+        total_cost = sum(lot['qty'] * lot['per_share_thb'] for lot in lots)
+        position_summaries.append({
+            'symbol': symbol,
+            'qty': total_qty,
+            'avg_cost_thb': total_cost / total_qty if total_qty > 0 else 0,
+            'total_cost_thb': total_cost,
+        })
+
     recent = (Transaction.query
               .order_by(Transaction.tx_date.desc(), Transaction.id.desc())
               .limit(8).all())
@@ -250,7 +262,7 @@ def dashboard():
     total_remitted = sum(r.amount_thb for r in rems_ytd)
 
     return render_template('dashboard.html',
-        positions=positions, year=yr,
+        position_summaries=position_summaries, year=yr,
         total_cg_thb=total_cg_thb, total_div_thb=total_div_thb,
         total_wht_thb=total_wht_thb, recent=recent,
         total_remitted=total_remitted, settings=settings,

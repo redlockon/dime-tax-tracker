@@ -52,10 +52,10 @@
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-pie-chart me-2 text-secondary"></i>Current Positions</span>
-        <span class="badge bg-secondary">{{ positions | length }} symbols</span>
+        <span class="badge bg-secondary">{{ position_summaries | length }} symbols</span>
       </div>
       <div class="card-body p-0">
-        {% if positions %}
+        {% if position_summaries %}
         <table class="table dt mb-0">
           <thead>
             <tr>
@@ -66,27 +66,12 @@
             </tr>
           </thead>
           <tbody>
-            {% for symbol, lots in positions.items() %}
-            {% set total_qty = lots | sum(attribute='qty') %}
-            {% set total_cost = lots | map(attribute='qty') | list | zip(lots | map(attribute='per_share_thb') | list) | map('product') | sum %}
+            {% for pos in position_summaries %}
             <tr>
-              <td><span class="fw-700">{{ symbol }}</span></td>
-              <td class="text-end num">{{ total_qty | round(4) }}</td>
-              <td class="text-end num">
-                {% if total_qty > 0 %}
-                  {% set avg = namespace(val=0) %}
-                  {% set total_c = namespace(val=0) %}
-                  {% for lot in lots %}
-                    {% set total_c.val = total_c.val + lot.qty * lot.per_share_thb %}
-                  {% endfor %}
-                  {{ (total_c.val / total_qty) | thb }}
-                {% else %}—{% endif %}
-              </td>
-              <td class="text-end num">
-                {% set total_c = namespace(val=0) %}
-                {% for lot in lots %}{% set total_c.val = total_c.val + lot.qty * lot.per_share_thb %}{% endfor %}
-                {{ total_c.val | thb }}
-              </td>
+              <td><span class="fw-700">{{ pos.symbol }}</span></td>
+              <td class="text-end num">{{ "%.4f" | format(pos.qty) }}</td>
+              <td class="text-end num">{{ pos.avg_cost_thb | thb }}</td>
+              <td class="text-end num">{{ pos.total_cost_thb | thb }}</td>
             </tr>
             {% endfor %}
           </tbody>
