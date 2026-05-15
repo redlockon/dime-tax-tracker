@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Import — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <div class="page-head">Import Historical Data</div>
+  <div class="page-sub">Upload a CSV from Alpaca / Dime export, or use the manual bulk entry guide below</div>
+</div>
+
+<div class="row g-4">
+  <!-- CSV Upload -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-file-earmark-spreadsheet me-2 text-secondary"></i>CSV Upload (Alpaca Format)</div>
+      <div class="card-body">
+        <p style="font-size:13px;color:#64748b;">
+          Upload the CSV you get from Dime's annual summary or an Alpaca broker export.
+          Expected columns: <code>Symbol</code>, <code>Acquired Date</code>, <code>Disposed Date</code>,
+          <code>Quantity</code>, <code>Cost</code>, <code>Proceed</code>
+        </p>
+
+        <form method="post" enctype="multipart/form-data">
+          <div class="mb-3">
+            <label class="form-label small fw-600">CSV File</label>
+            <input type="file" name="csv_file" accept=".csv" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-600">Exchange Rate (USDTHB) to apply to all imported rows</label>
+            <input type="number" name="exchange_rate" id="exRate" class="form-control" step="0.0001" min="1"
+                   placeholder="e.g. 34.50" required>
+            <div class="form-text" style="font-size:11px;">
+              Enter an approximate average rate for the import period. You can edit individual transactions after import.
+            </div>
+          </div>
+          <div class="alert alert-warning py-2" style="font-size:12px;">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            CSV import uses a single exchange rate for all rows. For tax accuracy, edit historical transactions
+            individually to set the correct rate per transaction date.
+          </div>
+          <button type="submit" class="btn btn-brand px-4">Import CSV</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual entry guide -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-keyboard me-2 text-secondary"></i>Manual Historical Entry</div>
+      <div class="card-body" style="font-size:13px;">
+        <p class="text-muted">For pre-app transactions without a CSV export, enter them one by one via <strong>Add Transaction</strong>.</p>
+
+        <div class="mb-3">
+          <div class="fw-600 mb-2">Where to find your transaction history in Dime:</div>
+          <ol style="color:#475569;line-height:2;">
+            <li>Open Dime App → <strong>Assets</strong> → <strong>US Stocks</strong></li>
+            <li>Tap <strong>Dime Analytics</strong> → <strong>Annual Summary</strong></li>
+            <li>Note: Cash flow summary (buy/sell) and Dividend summary are separate tabs</li>
+            <li>For per-trade history, contact Dime support for a broker statement</li>
+          </ol>
+        </div>
+
+        <div class="mb-3">
+          <div class="fw-600 mb-2">Priority — what to enter first:</div>
+          <ul style="color:#475569;line-height:2;">
+            <li><strong>All BUY transactions</strong> — needed for cost basis on any future sell</li>
+            <li><strong>SELL transactions from 2024 onward</strong> — these generate assessable gains</li>
+            <li><strong>Dividends from 2024 onward</strong> — assessable at receipt</li>
+            <li>Pre-2024 sell transactions — for completeness but not tax-assessable</li>
+          </ul>
+        </div>
+
+        <a href="{{ url_for('add_transaction') }}" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-plus me-1"></i>Add Transaction Manually
+        </a>
+      </div>
+    </div>
+
+    <!-- Exchange rate lookup hint -->
+    <div class="card mt-3">
+      <div class="card-header"><i class="bi bi-currency-exchange me-2 text-secondary"></i>Historical Exchange Rate Lookup</div>
+      <div class="card-body" style="font-size:13px;color:#475569;">
+        <p>The app auto-fetches USDTHB from Yahoo Finance for recent dates. For older dates (2+ years back), fetch may be less reliable. Use these sources:</p>
+        <ul style="line-height:2;">
+          <li><strong>Bank of Thailand:</strong> bot.or.th → Statistics → Exchange Rates → Daily</li>
+          <li><strong>Google:</strong> Search "USD THB [date]" for quick lookup</li>
+          <li><strong>Kasikorn / SCB rate archives</strong> (if you used their transfer)</li>
+        </ul>
+        <div class="text-muted" style="font-size:11px;">Consistency matters — if you use BOT rates for some transactions and bank rates for others, stick to one method. Record which method in the Notes field.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function fetchRate() {
+  try {
+    const res = await fetch('/api/rate');
+    const data = await res.json();
+    if (data.rate) document.getElementById('exRate').value = data.rate;
+  } catch {}
+}
+fetchRate();
+</script>
+{% endblock %}

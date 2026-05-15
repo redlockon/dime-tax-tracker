@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <div class="page-head">Dashboard</div>
+    <div class="page-sub">{{ year }} overview · Cost basis: {{ settings.cost_basis_method }}</div>
+  </div>
+  <a href="{{ url_for('add_transaction') }}" class="btn btn-brand btn-sm px-3">
+    <i class="bi bi-plus-lg me-1"></i>Add Transaction
+  </a>
+</div>
+
+<!-- Stat row -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card {% if total_cg_thb < 0 %}red{% elif total_cg_thb > 0 %}green{% endif %} p-3">
+      <div class="stat-label mb-1">{{ year }} Capital Gains</div>
+      <div class="stat-value {% if total_cg_thb < 0 %}neg{% elif total_cg_thb > 0 %}pos{% endif %}">
+        {{ total_cg_thb | thb }}
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">Assessable realised gains</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card p-3">
+      <div class="stat-label mb-1">{{ year }} Dividends</div>
+      <div class="stat-value">{{ total_div_thb | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">US WHT: {{ total_wht_thb | thb }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card orange p-3">
+      <div class="stat-label mb-1">{{ year }} Remitted to TH</div>
+      <div class="stat-value">{{ total_remitted | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">Tax-trigger events</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card p-3">
+      <div class="stat-label mb-1">Open Positions</div>
+      <div class="stat-value">{{ positions | length }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">Symbols held</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- Positions -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-pie-chart me-2 text-secondary"></i>Current Positions</span>
+        <span class="badge bg-secondary">{{ positions | length }} symbols</span>
+      </div>
+      <div class="card-body p-0">
+        {% if positions %}
+        <table class="table dt mb-0">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th class="text-end">Shares</th>
+              <th class="text-end">Avg Cost/Share (THB)</th>
+              <th class="text-end">Total Cost (THB)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for symbol, lots in positions.items() %}
+            {% set total_qty = lots | sum(attribute='qty') %}
+            {% set total_cost = lots | map(attribute='qty') | list | zip(lots | map(attribute='per_share_thb') | list) | map('product') | sum %}
+            <tr>
+              <td><span class="fw-700">{{ symbol }}</span></td>
+              <td class="text-end num">{{ total_qty | round(4) }}</td>
+              <td class="text-end num">
+                {% if total_qty > 0 %}
+                  {% set avg = namespace(val=0) %}
+                  {% set total_c = namespace(val=0) %}
+                  {% for lot in lots %}
+                    {% set total_c.val = total_c.val + lot.qty * lot.per_share_thb %}
+                  {% endfor %}
+                  {{ (total_c.val / total_qty) | thb }}
+                {% else %}—{% endif %}
+              </td>
+              <td class="text-end num">
+                {% set total_c = namespace(val=0) %}
+                {% for lot in lots %}{% set total_c.val = total_c.val + lot.qty * lot.per_share_thb %}{% endfor %}
+                {{ total_c.val | thb }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+          <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+          No positions yet. <a href="{{ url_for('add_transaction') }}">Add your first BUY.</a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent transactions -->
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-2 text-secondary"></i>Recent Transactions</span>
+        <a href="{{ url_for('transactions') }}" class="text-decoration-none" style="font-size:12px;color:var(--brand);">View all</a>
+      </div>
+      <div class="card-body p-0">
+        {% if recent %}
+        <table class="table dt mb-0">
+          <thead>
+            <tr><th>Date</th><th>Type</th><th>Symbol</th><th class="text-end">THB</th></tr>
+          </thead>
+          <tbody>
+            {% for tx in recent %}
+            <tr>
+              <td class="num" style="font-size:12px;">{{ tx.tx_date.strftime('%d %b %y') }}</td>
+              <td>
+                {% if tx.type == 'BUY' %}<span class="badge badge-buy">BUY</span>
+                {% elif tx.type == 'SELL' %}<span class="badge badge-sell">SELL</span>
+                {% else %}<span class="badge badge-div">DIV</span>{% endif %}
+              </td>
+              <td class="fw-600">{{ tx.symbol }}</td>
+              <td class="text-end num" style="font-size:12px;">{{ tx.total_thb | thb }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="text-center py-4 text-muted" style="font-size:13px;">No transactions yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Quick links -->
+    <div class="d-flex gap-2 mt-3">
+      <a href="{{ url_for('tax_summary') }}" class="btn btn-outline-secondary btn-sm flex-fill">
+        <i class="bi bi-receipt-cutoff me-1"></i>Tax Summary
+      </a>
+      <a href="{{ url_for('add_remittance') }}" class="btn btn-outline-secondary btn-sm flex-fill">
+        <i class="bi bi-send me-1"></i>Log Remittance
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

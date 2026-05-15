@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Settings — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <div class="page-head">Settings</div>
+  <div class="page-sub">App configuration — cost basis method locks after first SELL</div>
+</div>
+
+<div class="card" style="max-width:480px;">
+  <div class="card-body p-4">
+    <form method="post">
+      <div class="mb-4">
+        <label class="form-label fw-600">Cost Basis Method</label>
+        <div class="d-flex gap-3">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="cost_basis_method" id="m-fifo" value="FIFO"
+                   {% if s.cost_basis_method == 'FIFO' %}checked{% endif %}
+                   {% if s.cost_basis_locked %}disabled{% endif %}>
+            <label class="form-check-label" for="m-fifo">
+              <strong>FIFO</strong> — First In, First Out
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="cost_basis_method" id="m-avg" value="AVERAGE"
+                   {% if s.cost_basis_method == 'AVERAGE' %}checked{% endif %}
+                   {% if s.cost_basis_locked %}disabled{% endif %}>
+            <label class="form-check-label" for="m-avg">
+              <strong>Average Cost</strong>
+            </label>
+          </div>
+        </div>
+        <div class="form-text mt-2">
+          Both methods are accepted by the Thai Revenue Department. FIFO is more common for US stocks.
+          <strong>This setting locks permanently after your first SELL transaction is recorded.</strong>
+        </div>
+        {% if s.cost_basis_locked %}
+        <div class="alert alert-secondary py-2 mt-2" style="font-size:12px;">
+          <i class="bi bi-lock me-1"></i>
+          Locked at <strong>{{ s.cost_basis_method }}</strong> — a SELL transaction exists. Cannot change.
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="mb-4 p-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0;">
+        <div class="fw-600 mb-2" style="font-size:13px;">Tax Rules Applied</div>
+        <ul style="font-size:12px;color:#475569;line-height:2;margin-bottom:0;">
+          <li>Capital gains: assessable when <strong>remitted to Thailand</strong> (not at realisation)</li>
+          <li>Dividends: assessable at <strong>year of receipt</strong></li>
+          <li>Pre-2024 income: <strong>grandfathered</strong> — not assessable regardless of when remitted</li>
+          <li>Exchange rate: <strong>Yahoo Finance USDTHB=X</strong> (editable per transaction)</li>
+          <li>Filing form: <strong>PND 90</strong>, deadline 31 Mar / 8 Apr (e-filing)</li>
+        </ul>
+      </div>
+
+      {% if not s.cost_basis_locked %}
+      <button type="submit" class="btn btn-brand px-4">Save Settings</button>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}

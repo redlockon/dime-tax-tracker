@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Remittances — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <div class="page-head">Remittances</div>
+    <div class="page-sub">Money transferred to Thailand — the Thai tax trigger event for capital gains</div>
+  </div>
+  <a href="{{ url_for('add_remittance') }}" class="btn btn-brand btn-sm px-3">
+    <i class="bi bi-plus-lg me-1"></i>Log Remittance
+  </a>
+</div>
+
+<div class="alert alert-info py-2 mb-3" style="font-size:12px;">
+  <i class="bi bi-info-circle me-1"></i>
+  Capital gains are taxable in Thailand when remitted here — not when realised. Dividends are taxable at receipt (separate rule).
+</div>
+
+<!-- Filter -->
+<div class="card mb-3 p-3">
+  <form method="get" class="d-flex gap-2 align-items-end">
+    <div>
+      <label class="form-label mb-1" style="font-size:11px;font-weight:600;text-transform:uppercase;color:#64748b;">Year</label>
+      <select name="year" class="form-select form-select-sm" style="width:100px;">
+        <option value="">All</option>
+        {% for y in years %}<option value="{{ y }}" {% if fy == y %}selected{% endif %}>{{ y }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-sm btn-brand">Filter</button>
+    <a href="{{ url_for('remittances') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between">
+    <span>Remittance Log</span>
+    <span class="fw-700">Total: {{ total_thb | thb }}</span>
+  </div>
+  <div class="card-body p-0">
+    {% if rems %}
+    <table class="table dt mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th class="text-end">Amount (USD)</th>
+          <th class="text-end">Rate</th>
+          <th class="text-end">Amount (THB)</th>
+          <th>Bank</th>
+          <th>Notes</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rems %}
+        <tr>
+          <td class="num" style="font-size:12px;">{{ r.remit_date.strftime('%Y-%m-%d') }}</td>
+          <td class="text-end num">{{ r.amount_usd | usd2 if r.amount_usd else '—' }}</td>
+          <td class="text-end num" style="font-size:12px;">{{ r.exchange_rate }}</td>
+          <td class="text-end num fw-700">{{ r.amount_thb | thb }}</td>
+          <td style="font-size:12px;">{{ r.bank or '—' }}</td>
+          <td style="font-size:12px;color:#64748b;">{{ r.notes or '' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('delete_remittance', r_id=r.id) }}"
+                  onsubmit="return confirm('Delete this remittance?')">
+              <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-send fs-3 d-block mb-2"></i>
+      No remittances recorded. <a href="{{ url_for('add_remittance') }}">Log one now.</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Tax Summary {{ year }} — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <div class="page-head">Tax Summary — {{ year }}</div>
+    <div class="page-sub">Estimate for PND 90 filing · Method: {{ settings.cost_basis_method }} · Not a substitute for professional advice</div>
+  </div>
+</div>
+
+<!-- Year + Other income selectors -->
+<div class="card mb-4 p-3">
+  <form method="get" class="row g-3 align-items-end">
+    <div class="col-auto">
+      <label class="form-label mb-1" style="font-size:11px;font-weight:600;text-transform:uppercase;color:#64748b;">Tax Year</label>
+      <select name="year" class="form-select form-select-sm" style="width:100px;">
+        {% for y in years %}<option value="{{ y }}" {% if year == y %}selected{% endif %}>{{ y }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label mb-1" style="font-size:11px;font-weight:600;text-transform:uppercase;color:#64748b;">Other Annual Income (THB)</label>
+      <input type="number" name="other_income" class="form-control form-control-sm" style="width:180px;"
+             value="{{ other_income | int }}" step="1000" min="0" placeholder="e.g. salary">
+      <div class="form-text" style="font-size:10px;">Used to compute your marginal rate on investment income</div>
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-sm btn-brand">Update</button>
+    </div>
+  </form>
+</div>
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card {% if total_cg > 0 %}green{% elif total_cg < 0 %}red{% endif %} p-3">
+      <div class="stat-label mb-1">Capital Gains</div>
+      <div class="stat-value {% if total_cg >= 0 %}pos{% else %}neg{% endif %}">{{ total_cg | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">{{ yr_gains | length }} disposals</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card p-3">
+      <div class="stat-label mb-1">Dividends (Gross)</div>
+      <div class="stat-value">{{ total_div | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">US WHT: {{ total_wht | thb }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card orange p-3">
+      <div class="stat-label mb-1">Total Assessable</div>
+      <div class="stat-value">{{ assessable | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">Capital gains + dividends</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card red p-3">
+      <div class="stat-label mb-1">Est. Net Tax Owed</div>
+      <div class="stat-value neg">{{ net_tax | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">After US WHT credit</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- PND 90 computation -->
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-receipt-cutoff me-2 text-secondary"></i>PND 90 Estimate</div>
+      <div class="card-body">
+        <table class="table table-sm mb-0" style="font-size:13px;">
+          <tbody>
+            <tr><td class="text-muted">Capital gains</td><td class="text-end num fw-600">{{ total_cg | thb }}</td></tr>
+            <tr><td class="text-muted">Dividends (gross)</td><td class="text-end num fw-600">{{ total_div | thb }}</td></tr>
+            <tr class="border-top"><td class="fw-600">Total assessable</td><td class="text-end num fw-700">{{ assessable | thb }}</td></tr>
+            <tr><td class="text-muted">Other income input</td><td class="text-end num">{{ other_income | thb }}</td></tr>
+            <tr><td class="text-muted">Thai PIT on investment</td><td class="text-end num">{{ tax_on_inv | thb }}</td></tr>
+            <tr><td class="text-muted">Less: US WHT credit</td><td class="text-end num pos">({{ credit | thb }})</td></tr>
+            <tr class="border-top table-warning"><td class="fw-700">Est. Net Tax</td><td class="text-end num fw-700 neg">{{ net_tax | thb }}</td></tr>
+          </tbody>
+        </table>
+        <div class="mt-3 p-2 rounded" style="background:#f8fafc;font-size:11px;color:#64748b;line-height:1.6;">
+          <strong>Notes:</strong><br>
+          • Capital gains: taxable when remitted to Thailand<br>
+          • Dividends: taxable at year of receipt<br>
+          • Filing: PND 90, by 31 Mar (paper) / 8 Apr (e-filing)<br>
+          • This is an estimate — consult a Thai tax professional before filing
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gains detail -->
+  <div class="col-lg-7">
+    <div class="card mb-3">
+      <div class="card-header"><i class="bi bi-graph-up-arrow me-2 text-secondary"></i>Capital Gains Detail</div>
+      <div class="card-body p-0">
+        {% if yr_gains %}
+        <table class="table dt mb-0" style="font-size:12px;">
+          <thead>
+            <tr>
+              <th>Date</th><th>Symbol</th><th class="text-end">Qty</th>
+              <th class="text-end">Proceeds (THB)</th><th class="text-end">Cost (THB)</th>
+              <th class="text-end">Gain (THB)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for g in yr_gains %}
+            <tr>
+              <td style="white-space:nowrap;">{{ g.date.strftime('%Y-%m-%d') }}</td>
+              <td class="fw-700">{{ g.symbol }}</td>
+              <td class="text-end num">{{ g.quantity | round(4) }}</td>
+              <td class="text-end num">{{ g.proceeds_thb | thb }}</td>
+              <td class="text-end num">{{ g.cost_basis_thb | thb }}</td>
+              <td class="text-end num fw-700 {% if g.gain_thb >= 0 %}pos{% else %}neg{% endif %}">{{ g.gain_thb | thb }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="table-light">
+              <td colspan="5" class="fw-700">Total</td>
+              <td class="text-end num fw-700 {% if total_cg >= 0 %}pos{% else %}neg{% endif %}">{{ total_cg | thb }}</td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <div class="text-center py-4 text-muted" style="font-size:13px;">No assessable disposals in {{ year }}.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Dividends detail -->
+    <div class="card">
+      <div class="card-header"><i class="bi bi-cash-coin me-2 text-secondary"></i>Dividends Detail</div>
+      <div class="card-body p-0">
+        {% if yr_divs %}
+        <table class="table dt mb-0" style="font-size:12px;">
+          <thead>
+            <tr>
+              <th>Date</th><th>Symbol</th>
+              <th class="text-end">Gross (THB)</th><th class="text-end">US WHT (THB)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in yr_divs %}
+            <tr>
+              <td>{{ t.tx_date.strftime('%Y-%m-%d') }}</td>
+              <td class="fw-700">{{ t.symbol }}</td>
+              <td class="text-end num">{{ t.total_thb | thb }}</td>
+              <td class="text-end num">{{ (t.withholding_tax_thb or 0) | thb }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="table-light">
+              <td colspan="2" class="fw-700">Total</td>
+              <td class="text-end num fw-700">{{ total_div | thb }}</td>
+              <td class="text-end num fw-700">{{ total_wht | thb }}</td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <div class="text-center py-4 text-muted" style="font-size:13px;">No assessable dividends in {{ year }}.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

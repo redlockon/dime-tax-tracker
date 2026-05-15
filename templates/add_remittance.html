@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Log Remittance — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <div class="page-head">Log Remittance</div>
+  <div class="page-sub">Record money transferred to a Thai bank account</div>
+</div>
+
+<div class="card" style="max-width:520px;">
+  <div class="card-body p-4">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-6">
+          <label class="form-label small fw-600">Remittance Date</label>
+          <input type="date" name="remit_date" class="form-control" value="{{ today }}" required>
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Amount (THB)</label>
+          <input type="number" name="amount_thb" class="form-control" step="0.01" min="0" placeholder="0.00" required>
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Amount (USD) <span class="text-muted fw-400">optional</span></label>
+          <input type="number" name="amount_usd" class="form-control" step="0.01" min="0" placeholder="0.00">
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Exchange Rate (USDTHB)</label>
+          <input type="number" name="exchange_rate" id="exRate" class="form-control" step="0.0001" min="1" placeholder="Auto-fetch..." required>
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Bank <span class="text-muted fw-400">optional</span></label>
+          <input type="text" name="bank" class="form-control" placeholder="e.g. Kasikorn Bank">
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Notes <span class="text-muted fw-400">optional</span></label>
+          <input type="text" name="notes" class="form-control" placeholder="e.g. Wise transfer">
+        </div>
+      </div>
+
+      <div class="alert alert-warning py-2 mt-3" style="font-size:12px;">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        Capital gains on assessable disposals become Thai-taxable in the year of this remittance.
+      </div>
+
+      <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-brand px-4">Save Remittance</button>
+        <a href="{{ url_for('remittances') }}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function fetchRate() {
+  try {
+    const res = await fetch('/api/rate');
+    const data = await res.json();
+    if (data.rate) document.getElementById('exRate').value = data.rate;
+  } catch {}
+}
+fetchRate();
+</script>
+{% endblock %}

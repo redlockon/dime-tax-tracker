@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Transactions — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <div class="page-head">Transactions</div>
+    <div class="page-sub">{{ txs | length }} record(s) shown</div>
+  </div>
+  <a href="{{ url_for('add_transaction') }}" class="btn btn-brand btn-sm px-3">
+    <i class="bi bi-plus-lg me-1"></i>Add Transaction
+  </a>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3 p-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-auto">
+      <label class="form-label mb-1" style="font-size:11px;font-weight:600;text-transform:uppercase;color:#64748b;">Year</label>
+      <select name="year" class="form-select form-select-sm" style="width:100px;">
+        <option value="">All</option>
+        {% for y in years %}<option value="{{ y }}" {% if fy == y %}selected{% endif %}>{{ y }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label mb-1" style="font-size:11px;font-weight:600;text-transform:uppercase;color:#64748b;">Symbol</label>
+      <select name="symbol" class="form-select form-select-sm" style="width:110px;">
+        <option value="">All</option>
+        {% for s in symbols %}<option value="{{ s }}" {% if fs == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label mb-1" style="font-size:11px;font-weight:600;text-transform:uppercase;color:#64748b;">Type</label>
+      <select name="type" class="form-select form-select-sm" style="width:120px;">
+        <option value="">All</option>
+        <option value="BUY" {% if ft == 'BUY' %}selected{% endif %}>BUY</option>
+        <option value="SELL" {% if ft == 'SELL' %}selected{% endif %}>SELL</option>
+        <option value="DIVIDEND" {% if ft == 'DIVIDEND' %}selected{% endif %}>DIVIDEND</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-sm btn-brand">Filter</button>
+      <a href="{{ url_for('transactions') }}" class="btn btn-sm btn-outline-secondary ms-1">Clear</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    {% if txs %}
+    <div class="table-responsive">
+      <table class="table dt mb-0">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Symbol</th>
+            <th class="text-end">Qty</th>
+            <th class="text-end">Price (USD)</th>
+            <th class="text-end">Total (USD)</th>
+            <th class="text-end">Rate</th>
+            <th class="text-end">Total (THB)</th>
+            <th>Assessed</th>
+            <th>Notes</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in txs %}
+          <tr>
+            <td class="num" style="font-size:12px;white-space:nowrap;">{{ tx.tx_date.strftime('%Y-%m-%d') }}</td>
+            <td>
+              {% if tx.type == 'BUY' %}<span class="badge badge-buy">BUY</span>
+              {% elif tx.type == 'SELL' %}<span class="badge badge-sell">SELL</span>
+              {% else %}<span class="badge badge-div">DIV</span>{% endif %}
+            </td>
+            <td class="fw-700">{{ tx.symbol }}</td>
+            <td class="text-end num">{{ tx.quantity | num if tx.quantity else '—' }}</td>
+            <td class="text-end num">{{ tx.price_usd | usd if tx.price_usd else '—' }}</td>
+            <td class="text-end num">{{ tx.total_usd | usd2 }}</td>
+            <td class="text-end num" style="font-size:12px;">{{ tx.exchange_rate }}</td>
+            <td class="text-end num fw-600">{{ tx.total_thb | thb }}</td>
+            <td>
+              {% if tx.is_assessable %}
+                <span class="badge badge-yes">YES</span>
+              {% else %}
+                <span class="badge badge-no">Pre-2024</span>
+              {% endif %}
+            </td>
+            <td style="font-size:12px;color:#64748b;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ tx.notes or '' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('delete_transaction', tx_id=tx.id) }}"
+                    onsubmit="return confirm('Delete this transaction?')">
+                <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+      No transactions found. <a href="{{ url_for('add_transaction') }}">Add one now.</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

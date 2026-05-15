@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Add Transaction — Dime Tax Tracker{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <div class="page-head">Add Transaction</div>
+  <div class="page-sub">Exchange rate is auto-fetched from Yahoo Finance (USDTHB=X). Override if needed.</div>
+</div>
+
+<div class="card" style="max-width:640px;">
+  <div class="card-body p-4">
+    <form method="post" id="txForm">
+
+      <!-- Type selector -->
+      <div class="mb-4">
+        <label class="form-label fw-600" style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;">Transaction Type</label>
+        <div class="d-flex gap-2">
+          <input type="radio" class="btn-check" name="type" id="t-buy" value="BUY" checked>
+          <label class="btn btn-outline-success" for="t-buy">BUY</label>
+          <input type="radio" class="btn-check" name="type" id="t-sell" value="SELL">
+          <label class="btn btn-outline-danger" for="t-sell">SELL</label>
+          <input type="radio" class="btn-check" name="type" id="t-div" value="DIVIDEND">
+          <label class="btn btn-outline-primary" for="t-div">DIVIDEND</label>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-6">
+          <label class="form-label small fw-600">Symbol</label>
+          <input type="text" name="symbol" class="form-control" placeholder="e.g. AAPL" required style="text-transform:uppercase;">
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Date</label>
+          <input type="date" name="tx_date" id="txDate" class="form-control" value="{{ today }}" required>
+        </div>
+      </div>
+
+      <!-- BUY / SELL fields -->
+      <div id="stockFields" class="row g-3 mt-1">
+        <div class="col-6">
+          <label class="form-label small fw-600">Quantity (shares)</label>
+          <input type="number" name="quantity" class="form-control" step="0.000001" min="0.000001" placeholder="0.000000">
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Price per Share (USD)</label>
+          <input type="number" name="price_usd" class="form-control" step="0.0001" min="0" placeholder="0.0000">
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Fees (USD)</label>
+          <input type="number" name="fees_usd" class="form-control" step="0.01" min="0" value="0" placeholder="0.00">
+        </div>
+      </div>
+
+      <!-- DIVIDEND fields -->
+      <div id="divFields" class="row g-3 mt-1" style="display:none!important;">
+        <div class="col-6">
+          <label class="form-label small fw-600">Gross Dividend (USD)</label>
+          <input type="number" name="total_usd" class="form-control" step="0.01" min="0" placeholder="0.00">
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">US Withholding Tax (USD)</label>
+          <input type="number" name="withholding_tax_usd" class="form-control" step="0.01" min="0" value="0" placeholder="0.00">
+          <div class="form-text">15% via W-8BEN, or 30% without.</div>
+        </div>
+      </div>
+
+      <!-- Exchange rate -->
+      <div class="row g-3 mt-1">
+        <div class="col-6">
+          <label class="form-label small fw-600">Exchange Rate (USDTHB)</label>
+          <div class="input-group">
+            <input type="number" name="exchange_rate" id="exRate" class="form-control" step="0.0001" min="1" placeholder="Auto-fetch..." required>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="fetchRate" title="Fetch rate for selected date">
+              <i class="bi bi-arrow-repeat"></i>
+            </button>
+          </div>
+          <div class="form-text" id="rateStatus"></div>
+        </div>
+        <div class="col-6">
+          <label class="form-label small fw-600">Notes (optional)</label>
+          <input type="text" name="notes" class="form-control" placeholder="e.g. Q1 dividend, broker commission">
+        </div>
+      </div>
+
+      {% if settings.cost_basis_method == 'FIFO' and settings.cost_basis_locked %}
+      <div class="alert alert-info py-2 mt-3" style="font-size:12px;">
+        <i class="bi bi-info-circle me-1"></i>Cost basis method: <strong>FIFO</strong> (locked).
+      </div>
+      {% elif not settings.cost_basis_locked %}
+      <div class="alert alert-warning py-2 mt-3" style="font-size:12px;">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        Cost basis method (<strong>{{ settings.cost_basis_method }}</strong>) locks after your first SELL.
+        <a href="{{ url_for('settings_page') }}">Change in Settings.</a>
+      </div>
+      {% endif %}
+
+      <div class="d-flex gap-2 mt-4">
+        <button type="submit" class="btn btn-brand px-4">Save Transaction</button>
+        <a href="{{ url_for('transactions') }}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const stockFields = document.getElementById('stockFields');
+const divFields = document.getElementById('divFields');
+const txDate = document.getElementById('txDate');
+const exRate = document.getElementById('exRate');
+const rateStatus = document.getElementById('rateStatus');
+const fetchBtn = document.getElementById('fetchRate');
+
+document.querySelectorAll('input[name="type"]').forEach(r => {
+  r.addEventListener('change', () => {
+    const isDiv = r.value === 'DIVIDEND';
+    stockFields.style.display = isDiv ? 'none' : '';
+    divFields.style.display = isDiv ? '' : 'none';
+    stockFields.style.setProperty('display', isDiv ? 'none' : '', 'important');
+    divFields.style.setProperty('display', isDiv ? '' : 'none', 'important');
+  });
+});
+
+async function fetchRate() {
+  const d = txDate.value;
+  if (!d) return;
+  rateStatus.textContent = 'Fetching…';
+  fetchBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/rate?date=${d}`);
+    const data = await res.json();
+    if (data.rate) {
+      exRate.value = data.rate;
+      rateStatus.textContent = `Rate: ${data.rate} (Yahoo Finance)`;
+    } else {
+      rateStatus.textContent = 'Could not fetch — enter manually.';
+    }
+  } catch {
+    rateStatus.textContent = 'Error fetching — enter manually.';
+  }
+  fetchBtn.disabled = false;
+}
+
+fetchBtn.addEventListener('click', fetchRate);
+txDate.addEventListener('change', fetchRate);
+
+// Auto-fetch on load
+fetchRate();
+</script>
+{% endblock %}
