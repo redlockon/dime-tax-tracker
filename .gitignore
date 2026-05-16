@@ -1,9 +1,19 @@
-.env
-*.db
+# Python
 __pycache__/
 *.pyc
-.DS_Store
-venv/
+*.pyo
 .venv/
-*.egg-info/
-dist/
+venv/
+
+# Database
+instance/
+*.db
+*.sqlite3
+
+# Sensitive data — keep off GitHub
+data/transactions_raw.json
+data/transactions_import.json
+data/screenshots/
+
+# OS
+.DS_Store
