@@ -250,6 +250,8 @@ def dashboard():
     position_summaries = []
     for symbol, lots in sorted(positions.items()):
         total_qty = sum(lot['qty'] for lot in lots)
+        if total_qty < 0.0001:
+            continue
         total_cost = sum(lot['qty'] * lot['per_share_thb'] for lot in lots)
         position_summaries.append({
             'symbol': symbol,
