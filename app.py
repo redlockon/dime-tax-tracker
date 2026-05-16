@@ -90,7 +90,10 @@ def logout():
 
 @app.route('/health')
 def health():
-    return 'OK', 200
+    count = Transaction.query.count()
+    db_uri = app.config['SQLALCHEMY_DATABASE_URI']
+    db_type = 'postgresql' if 'postgresql' in db_uri else 'sqlite'
+    return jsonify(ok=True, db=db_type, tx_count=count), 200
 
 # ── Exchange Rate ─────────────────────────────────────────────────────────────
 
