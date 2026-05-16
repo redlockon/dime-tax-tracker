@@ -320,9 +320,10 @@ def refresh_prices():
     _, positions = compute_gains(txs, get_settings().cost_basis_method)
     symbols = [s for s, lots in positions.items() if sum(l['qty'] for l in lots) > 0.0001]
 
-    now     = datetime.utcnow()
+    now  = datetime.utcnow()
     fetched = 0
 
+    # Batch-fetch all stock prices + USDTHB in two yfinance calls
     rate = get_usdthb_rate()
     if rate:
         entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
@@ -330,14 +331,23 @@ def refresh_prices():
         entry.fetched_at = now
         db.session.merge(entry)
 
-    for sym in symbols:
+    if symbols:
         try:
-            price = round(float(yf.Ticker(sym).fast_info.last_price), 4)
-            entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
-            entry.price_usd  = price
-            entry.fetched_at = now
-            db.session.merge(entry)
-            fetched += 1
+            raw = yf.download(
+                ' '.join(symbols), period='2d',
+                progress=False, auto_adjust=True, threads=True,
+            )
+            closes = raw['Close'] if len(symbols) > 1 else raw['Close'].rename(symbols[0])
+            for sym in symbols:
+                try:
+                    price = round(float(closes[sym].dropna().iloc[-1]), 4)
+                    entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
+                    entry.price_usd  = price
+                    entry.fetched_at = now
+                    db.session.merge(entry)
+                    fetched += 1
+                except Exception:
+                    pass
         except Exception:
             pass
 
