@@ -2,39 +2,60 @@
 {% block title %}Dashboard — Dime Tax Tracker{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-4">
+
+<!-- Header -->
+<div class="d-flex align-items-start justify-content-between mb-3">
   <div>
-    <div class="page-head">Dashboard</div>
-    <div class="page-sub">{{ year }} overview · Cost basis: {{ settings.cost_basis_method }}</div>
+    <div class="page-head">Portfolio</div>
+    <div class="page-sub">
+      {% if last_updated %}
+        Last updated {{ last_updated.strftime('%d %b %Y %H:%M') }} UTC
+        {% if current_rate %} · 1 USD = ฿{{ "%.2f" | format(current_rate) }}{% endif %}
+      {% else %}
+        Prices not loaded — click Refresh Prices
+      {% endif %}
+    </div>
   </div>
-  <a href="{{ url_for('add_transaction') }}" class="btn btn-brand btn-sm px-3">
-    <i class="bi bi-plus-lg me-1"></i>Add Transaction
-  </a>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('add_transaction') }}" class="btn btn-outline-secondary btn-sm px-3">
+      <i class="bi bi-plus-lg me-1"></i>Add Transaction
+    </a>
+    <form method="post" action="{{ url_for('refresh_prices') }}" id="refreshForm">
+      <button class="btn btn-brand btn-sm px-3" id="refreshBtn" type="submit">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh Prices
+      </button>
+    </form>
+  </div>
 </div>
 
-<!-- Stat row -->
+<!-- Portfolio totals (only shown after first refresh) -->
+{% if total_value_thb is not none %}
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
-    <div class="card stat-card {% if total_cg_thb < 0 %}red{% elif total_cg_thb > 0 %}green{% endif %} p-3">
-      <div class="stat-label mb-1">{{ year }} Capital Gains</div>
-      <div class="stat-value {% if total_cg_thb < 0 %}neg{% elif total_cg_thb > 0 %}pos{% endif %}">
-        {{ total_cg_thb | thb }}
-      </div>
-      <div class="muted" style="font-size:11px;margin-top:4px;">Assessable realised gains</div>
+    <div class="card stat-card p-3">
+      <div class="stat-label mb-1">Cost Basis</div>
+      <div class="stat-value">{{ total_cost_thb | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">What you paid (THB)</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card stat-card p-3">
-      <div class="stat-label mb-1">{{ year }} Dividends</div>
-      <div class="stat-value">{{ total_div_thb | thb }}</div>
-      <div class="muted" style="font-size:11px;margin-top:4px;">US WHT: {{ total_wht_thb | thb }}</div>
+      <div class="stat-label mb-1">Current Value</div>
+      <div class="stat-value">{{ total_value_thb | thb }}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">At today's prices (THB)</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="card stat-card orange p-3">
-      <div class="stat-label mb-1">{{ year }} Remitted to TH</div>
-      <div class="stat-value">{{ total_remitted | thb }}</div>
-      <div class="muted" style="font-size:11px;margin-top:4px;">Tax-trigger events</div>
+    <div class="card stat-card {% if total_unrealized_thb < 0 %}red{% elif total_unrealized_thb > 0 %}green{% endif %} p-3">
+      <div class="stat-label mb-1">Unrealized P/L</div>
+      <div class="stat-value {% if total_unrealized_thb < 0 %}neg{% elif total_unrealized_thb > 0 %}pos{% endif %}">
+        {{ total_unrealized_thb | thb }}
+      </div>
+      {% if total_cost_thb %}
+      <div class="muted" style="font-size:11px;margin-top:4px;">
+        {{ ((total_unrealized_thb / total_cost_thb) * 100) | pct }}
+      </div>
+      {% endif %}
     </div>
   </div>
   <div class="col-6 col-lg-3">
@@ -45,90 +66,143 @@
     </div>
   </div>
 </div>
+{% endif %}
 
-<div class="row g-3">
-  <!-- Positions -->
-  <div class="col-lg-7">
-    <div class="card">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-pie-chart me-2 text-secondary"></i>Current Positions</span>
-        <span class="badge bg-secondary">{{ position_summaries | length }} symbols</span>
-      </div>
-      <div class="card-body p-0">
-        {% if position_summaries %}
-        <table class="table dt mb-0">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th class="text-end">Shares</th>
-              <th class="text-end">Avg Cost/Share (THB)</th>
-              <th class="text-end">Total Cost (THB)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for pos in position_summaries %}
-            <tr>
-              <td><span class="fw-700">{{ pos.symbol }}</span></td>
-              <td class="text-end num">{{ "%.4f" | format(pos.qty) }}</td>
-              <td class="text-end num">{{ pos.avg_cost_thb | thb }}</td>
-              <td class="text-end num">{{ pos.total_cost_thb | thb }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <div class="text-center py-5 text-muted">
-          <i class="bi bi-inbox fs-3 d-block mb-2"></i>
-          No positions yet. <a href="{{ url_for('add_transaction') }}">Add your first BUY.</a>
-        </div>
-        {% endif %}
-      </div>
+<!-- Holdings table -->
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-pie-chart me-2 text-secondary"></i>Current Holdings</span>
+    <span class="badge bg-secondary">{{ position_summaries | length }} symbols</span>
+  </div>
+  <div class="card-body p-0">
+    {% if position_summaries %}
+    <div class="table-responsive">
+    <table class="table dt mb-0">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th class="text-end">Shares</th>
+          <th class="text-end">Avg Cost/Share (THB)</th>
+          <th class="text-end">Cost Basis (THB)</th>
+          <th class="text-end">Price (USD)</th>
+          <th class="text-end">Value (THB)</th>
+          <th class="text-end">Unrealized P/L (THB)</th>
+          <th class="text-end">%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pos in position_summaries %}
+        <tr>
+          <td><span class="fw-bold">{{ pos.symbol }}</span></td>
+          <td class="text-end num">{{ "%.4f" | format(pos.qty) }}</td>
+          <td class="text-end num">{{ pos.avg_cost_thb | thb }}</td>
+          <td class="text-end num">{{ pos.total_cost_thb | thb }}</td>
+          <td class="text-end num">
+            {% if pos.current_price_usd is not none %}
+              ${{ "%.2f" | format(pos.current_price_usd) }}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td class="text-end num">
+            {% if pos.current_value_thb is not none %}{{ pos.current_value_thb | thb }}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td class="text-end num {% if pos.unrealized_thb is not none %}{% if pos.unrealized_thb < 0 %}neg{% else %}pos{% endif %}{% endif %}">
+            {% if pos.unrealized_thb is not none %}{{ pos.unrealized_thb | thb }}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td class="text-end num {% if pos.unrealized_pct is not none %}{% if pos.unrealized_pct < 0 %}neg{% else %}pos{% endif %}{% endif %}">
+            {% if pos.unrealized_pct is not none %}{{ pos.unrealized_pct | pct }}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if total_value_thb is not none %}
+      <tfoot>
+        <tr style="background:#f8fafc;font-weight:700;border-top:2px solid #e2e8f0;">
+          <td colspan="3" class="num" style="font-size:12px;">TOTAL</td>
+          <td class="text-end num">{{ total_cost_thb | thb }}</td>
+          <td></td>
+          <td class="text-end num">{{ total_value_thb | thb }}</td>
+          <td class="text-end num {% if total_unrealized_thb < 0 %}neg{% else %}pos{% endif %}">
+            {{ total_unrealized_thb | thb }}
+          </td>
+          <td class="text-end num {% if total_unrealized_thb < 0 %}neg{% else %}pos{% endif %}">
+            {{ ((total_unrealized_thb / total_cost_thb) * 100) | pct if total_cost_thb else '—' }}
+          </td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+      No positions yet. <a href="{{ url_for('add_transaction') }}">Add your first BUY.</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Tax summary section -->
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span><i class="bi bi-receipt-cutoff me-2 text-secondary"></i>Tax Summary</span>
+    <div class="d-flex align-items-center gap-2">
+      <form method="get" class="mb-0">
+        <select name="year" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
+          {% for y in years %}
+          <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <a href="{{ url_for('export_tax', year=year) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-download me-1"></i>Export CSV
+      </a>
+      <a href="{{ url_for('tax_summary', year=year) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-right me-1"></i>Full Report
+      </a>
     </div>
   </div>
-
-  <!-- Recent transactions -->
-  <div class="col-lg-5">
-    <div class="card">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-clock-history me-2 text-secondary"></i>Recent Transactions</span>
-        <a href="{{ url_for('transactions') }}" class="text-decoration-none" style="font-size:12px;color:var(--brand);">View all</a>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="p-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0;">
+          <div class="stat-label mb-1">{{ year }} Capital Gains</div>
+          <div class="stat-value {% if total_cg_thb < 0 %}neg{% elif total_cg_thb > 0 %}pos{% endif %}" style="font-size:20px;">
+            {{ total_cg_thb | thb }}
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:4px;">Realised gains (assessable)</div>
+        </div>
       </div>
-      <div class="card-body p-0">
-        {% if recent %}
-        <table class="table dt mb-0">
-          <thead>
-            <tr><th>Date</th><th>Type</th><th>Symbol</th><th class="text-end">THB</th></tr>
-          </thead>
-          <tbody>
-            {% for tx in recent %}
-            <tr>
-              <td class="num" style="font-size:12px;">{{ tx.tx_date.strftime('%d %b %y') }}</td>
-              <td>
-                {% if tx.type == 'BUY' %}<span class="badge badge-buy">BUY</span>
-                {% elif tx.type == 'SELL' %}<span class="badge badge-sell">SELL</span>
-                {% else %}<span class="badge badge-div">DIV</span>{% endif %}
-              </td>
-              <td class="fw-600">{{ tx.symbol }}</td>
-              <td class="text-end num" style="font-size:12px;">{{ tx.total_thb | thb }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <div class="text-center py-4 text-muted" style="font-size:13px;">No transactions yet.</div>
-        {% endif %}
+      <div class="col-md-4">
+        <div class="p-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0;">
+          <div class="stat-label mb-1">{{ year }} Dividends</div>
+          <div class="stat-value" style="font-size:20px;">{{ total_div_thb | thb }}</div>
+          <div class="muted" style="font-size:11px;margin-top:4px;">US WHT: {{ total_wht_thb | thb }}</div>
+        </div>
       </div>
-    </div>
-
-    <!-- Quick links -->
-    <div class="d-flex gap-2 mt-3">
-      <a href="{{ url_for('tax_summary') }}" class="btn btn-outline-secondary btn-sm flex-fill">
-        <i class="bi bi-receipt-cutoff me-1"></i>Tax Summary
-      </a>
-      <a href="{{ url_for('add_remittance') }}" class="btn btn-outline-secondary btn-sm flex-fill">
-        <i class="bi bi-send me-1"></i>Log Remittance
-      </a>
+      <div class="col-md-4">
+        <div class="p-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0;">
+          <div class="stat-label mb-1">{{ year }} Net Assessable</div>
+          {% set assessable = total_cg_thb + total_div_thb %}
+          <div class="stat-value {% if assessable < 0 %}neg{% elif assessable > 0 %}pos{% endif %}" style="font-size:20px;">
+            {{ assessable | thb }}
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:4px;">CG + Dividends (before WHT credit)</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('refreshBtn').addEventListener('click', function() {
+  this.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Refreshing...';
+  this.disabled = true;
+});
+</script>
 {% endblock %}

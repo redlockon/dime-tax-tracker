@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from functools import wraps
 
 from flask import (Flask, render_template, request, redirect,
-                   url_for, session, flash, jsonify)
+                   url_for, session, flash, jsonify, Response)
 from flask_sqlalchemy import SQLAlchemy
 import yfinance as yf
 
@@ -49,6 +49,12 @@ class Transaction(db.Model):
     @property
     def is_assessable(self):
         return self.tx_date >= CUTOFF
+
+
+class PriceCache(db.Model):
+    symbol    = db.Column(db.String(20), primary_key=True)
+    price_usd = db.Column(db.Float)
+    fetched_at = db.Column(db.DateTime)
 
 
 class Remittance(db.Model):
@@ -230,48 +236,115 @@ def _gain_record(tx, proceeds, cost_basis):
 @login_required
 def dashboard():
     settings = get_settings()
-    txs = Transaction.query.order_by(Transaction.tx_date).all()
+    yr = request.args.get('year', date.today().year, type=int)
+
+    txs = Transaction.query.order_by(Transaction.tx_date, Transaction.id).all()
     gains, positions = compute_gains(txs, settings.cost_basis_method)
 
-    yr = date.today().year
-    yr_start, yr_end = date(yr, 1, 1), date(yr, 12, 31)
+    # Cached prices
+    price_map   = {p.symbol: p for p in PriceCache.query.all()}
+    rate_entry  = price_map.get('__USDTHB__')
+    current_rate = rate_entry.price_usd if rate_entry else None
+    last_updated = rate_entry.fetched_at if rate_entry else None
 
-    ytd_gains = [g for g in gains if g['is_assessable'] and g['date'].year == yr]
-    ytd_divs = Transaction.query.filter(
-        Transaction.type == 'DIVIDEND',
-        Transaction.tx_date.between(yr_start, yr_end),
-    ).all()
-
-    total_cg_thb = sum(g['gain_thb'] for g in ytd_gains)
-    total_div_thb = sum(t.total_thb for t in ytd_divs if t.is_assessable)
-    total_wht_thb = sum(t.withholding_tax_thb or 0 for t in ytd_divs if t.is_assessable)
-
-    # Pre-compute position summaries so templates don't need complex filters
+    # Build position summaries with live market data
     position_summaries = []
+    total_cost_thb  = 0.0
+    total_value_thb = 0.0
+    prices_available = False
+
     for symbol, lots in sorted(positions.items()):
         total_qty = sum(lot['qty'] for lot in lots)
         if total_qty < 0.0001:
             continue
         total_cost = sum(lot['qty'] * lot['per_share_thb'] for lot in lots)
+
+        cached = price_map.get(symbol)
+        cur_price = cached.price_usd if cached else None
+        cur_value = round(cur_price * total_qty * current_rate, 2) if (cur_price and current_rate) else None
+        unreal    = round(cur_value - total_cost, 2) if cur_value is not None else None
+        unreal_pct = round(unreal / total_cost * 100, 2) if (unreal is not None and total_cost) else None
+
+        if cur_value is not None:
+            prices_available = True
+            total_value_thb += cur_value
+
+        total_cost_thb += total_cost
         position_summaries.append({
-            'symbol': symbol,
-            'qty': total_qty,
-            'avg_cost_thb': total_cost / total_qty if total_qty > 0 else 0,
+            'symbol': symbol, 'qty': total_qty,
+            'avg_cost_thb': total_cost / total_qty,
             'total_cost_thb': total_cost,
+            'current_price_usd': cur_price,
+            'current_value_thb': cur_value,
+            'unrealized_thb': unreal,
+            'unrealized_pct': unreal_pct,
         })
 
-    recent = (Transaction.query
-              .order_by(Transaction.tx_date.desc(), Transaction.id.desc())
-              .limit(8).all())
-    rems_ytd = Remittance.query.filter(Remittance.remit_date >= yr_start).all()
-    total_remitted = sum(r.amount_thb for r in rems_ytd)
+    total_unrealized_thb = round(total_value_thb - total_cost_thb, 2) if prices_available else None
+
+    # Tax section for selected year
+    yr_start, yr_end = date(yr, 1, 1), date(yr, 12, 31)
+    yr_gains = [g for g in gains if g['is_assessable'] and g['date'].year == yr]
+    yr_divs  = Transaction.query.filter(
+        Transaction.type == 'DIVIDEND',
+        Transaction.tx_date.between(yr_start, yr_end),
+        Transaction.tx_date >= CUTOFF,
+    ).all()
+    total_cg_thb  = sum(g['gain_thb'] for g in yr_gains)
+    total_div_thb = sum(t.total_thb for t in yr_divs)
+    total_wht_thb = sum(t.withholding_tax_thb or 0 for t in yr_divs)
+
+    years = sorted(
+        {int(r[0]) for r in db.session.query(db.extract('year', Transaction.tx_date)).all()},
+        reverse=True,
+    )
 
     return render_template('dashboard.html',
-        position_summaries=position_summaries, year=yr,
+        position_summaries=position_summaries,
+        total_cost_thb=total_cost_thb,
+        total_value_thb=total_value_thb if prices_available else None,
+        total_unrealized_thb=total_unrealized_thb,
+        current_rate=current_rate, last_updated=last_updated,
+        year=yr, years=years,
         total_cg_thb=total_cg_thb, total_div_thb=total_div_thb,
-        total_wht_thb=total_wht_thb, recent=recent,
-        total_remitted=total_remitted, settings=settings,
+        total_wht_thb=total_wht_thb, settings=settings,
     )
+
+
+@app.route('/api/refresh-prices', methods=['POST'])
+@login_required
+def refresh_prices():
+    txs = Transaction.query.filter(
+        Transaction.type.in_(['BUY', 'SELL'])
+    ).order_by(Transaction.tx_date, Transaction.id).all()
+    _, positions = compute_gains(txs, get_settings().cost_basis_method)
+    symbols = [s for s, lots in positions.items() if sum(l['qty'] for l in lots) > 0.0001]
+
+    now     = datetime.utcnow()
+    fetched = 0
+
+    rate = get_usdthb_rate()
+    if rate:
+        entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
+        entry.price_usd  = rate
+        entry.fetched_at = now
+        db.session.merge(entry)
+
+    for sym in symbols:
+        try:
+            price = round(float(yf.Ticker(sym).fast_info.last_price), 4)
+            entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
+            entry.price_usd  = price
+            entry.fetched_at = now
+            db.session.merge(entry)
+            fetched += 1
+        except Exception:
+            pass
+
+    db.session.commit()
+    rate_str = f'฿{rate:.2f}' if rate else '—'
+    flash(f'Prices refreshed for {fetched}/{len(symbols)} symbols · 1 USD = {rate_str}', 'success')
+    return redirect(url_for('dashboard'))
 
 # ── Transactions ──────────────────────────────────────────────────────────────
 
@@ -452,6 +525,55 @@ def tax_summary():
         credit=credit, net_tax=net_tax, settings=settings,
     )
 
+# ── Tax Export ────────────────────────────────────────────────────────────────
+
+@app.route('/tax/export')
+@login_required
+def export_tax():
+    yr = request.args.get('year', date.today().year, type=int)
+    txs = Transaction.query.order_by(Transaction.tx_date, Transaction.id).all()
+    gains, _ = compute_gains(txs, get_settings().cost_basis_method)
+
+    yr_gains = [g for g in gains if g['is_assessable'] and g['date'].year == yr]
+    yr_divs  = Transaction.query.filter(
+        Transaction.type == 'DIVIDEND',
+        Transaction.tx_date.between(date(yr, 1, 1), date(yr, 12, 31)),
+        Transaction.tx_date >= CUTOFF,
+    ).order_by(Transaction.tx_date).all()
+
+    out = io.StringIO()
+    w   = csv.writer(out)
+
+    w.writerow([f'Capital Gains {yr} — FIFO, assessable only (pre-2024 excluded)'])
+    w.writerow(['Date', 'Symbol', 'Shares', 'Proceeds (THB)', 'Cost Basis (THB)', 'Gain/Loss (THB)'])
+    for g in yr_gains:
+        w.writerow([g['date'], g['symbol'], f"{g['quantity']:.6f}",
+                    f"{g['proceeds_thb']:.2f}", f"{g['cost_basis_thb']:.2f}", f"{g['gain_thb']:.2f}"])
+    total_cg = sum(g['gain_thb'] for g in yr_gains)
+    w.writerow(['', '', 'TOTAL', '', '', f'{total_cg:.2f}'])
+
+    w.writerow([])
+
+    w.writerow([f'Dividends {yr} — assessable only'])
+    w.writerow(['Date', 'Symbol', 'Gross (THB)', 'US WHT (THB)', 'Net (THB)'])
+    for t in yr_divs:
+        wht = t.withholding_tax_thb or 0
+        w.writerow([t.tx_date, t.symbol, f'{t.total_thb:.2f}', f'{wht:.2f}', f'{t.total_thb - wht:.2f}'])
+    total_div = sum(t.total_thb for t in yr_divs)
+    total_wht = sum(t.withholding_tax_thb or 0 for t in yr_divs)
+    w.writerow(['', 'TOTAL', f'{total_div:.2f}', f'{total_wht:.2f}', f'{total_div - total_wht:.2f}'])
+
+    w.writerow([])
+    w.writerow(['ASSESSABLE INCOME SUMMARY'])
+    w.writerow(['Capital Gains (THB)', f'{total_cg:.2f}'])
+    w.writerow(['Dividends (THB)', f'{total_div:.2f}'])
+    w.writerow(['US WHT Credit (THB)', f'{total_wht:.2f}'])
+    w.writerow(['Net Assessable (THB)', f'{total_cg + total_div:.2f}'])
+
+    out.seek(0)
+    return Response(out.getvalue(), mimetype='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename=tax_{yr}.csv'})
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -465,80 +587,6 @@ def settings_page():
     elif request.method == 'POST' and s.cost_basis_locked:
         flash('Cost basis method is locked — a SELL transaction has already been recorded.', 'warning')
     return render_template('settings.html', s=s)
-
-# ── CSV Import ────────────────────────────────────────────────────────────────
-
-@app.route('/import', methods=['GET', 'POST'])
-@login_required
-def import_csv():
-    if request.method == 'POST':
-        f = request.files.get('csv_file')
-        if not f or not f.filename.endswith('.csv'):
-            flash('Upload a .csv file.', 'danger')
-            return redirect(url_for('import_csv'))
-
-        exrate = float(request.form.get('exchange_rate') or 0)
-        if exrate <= 0:
-            flash('Enter a valid exchange rate for the import.', 'danger')
-            return redirect(url_for('import_csv'))
-
-        stream = io.StringIO(f.stream.read().decode('utf-8-sig'))
-        reader = csv.DictReader(stream)
-        imported, errors = 0, []
-
-        for i, row in enumerate(reader, 1):
-            try:
-                sym = (row.get('Symbol') or row.get('symbol', '')).strip().upper()
-                if not sym:
-                    continue
-
-                acq_str = (row.get('Acquired Date') or row.get('acquired_date') or '').strip()
-                dis_str = (row.get('Disposed Date') or row.get('disposed_date') or '').strip()
-                cost = float((row.get('Cost') or row.get('cost') or '0').replace(',', ''))
-                proceed = float((row.get('Proceed') or row.get('proceed') or '0').replace(',', ''))
-                qty_raw = (row.get('Quantity') or row.get('quantity') or '1').replace(',', '')
-                qty = float(qty_raw) if qty_raw else 1.0
-
-                if acq_str:
-                    acq_date = _parse_date(acq_str)
-                    price = cost / qty if qty else cost
-                    db.session.add(Transaction(
-                        type='BUY', symbol=sym, tx_date=acq_date,
-                        quantity=qty, price_usd=price, total_usd=cost,
-                        fees_usd=0, exchange_rate=exrate, total_thb=cost * exrate,
-                        notes='Imported from CSV',
-                    ))
-                    imported += 1
-
-                if dis_str:
-                    dis_date = _parse_date(dis_str)
-                    price = proceed / qty if qty else proceed
-                    db.session.add(Transaction(
-                        type='SELL', symbol=sym, tx_date=dis_date,
-                        quantity=qty, price_usd=price, total_usd=proceed,
-                        fees_usd=0, exchange_rate=exrate, total_thb=proceed * exrate,
-                        notes='Imported from CSV',
-                    ))
-                    imported += 1
-            except Exception as e:
-                errors.append(f'Row {i}: {e}')
-
-        db.session.commit()
-        flash(f'Imported {imported} transaction records.', 'success')
-        for e in errors[:5]:
-            flash(e, 'warning')
-        return redirect(url_for('transactions'))
-
-    return render_template('import_csv.html')
-
-
-def _parse_date(s):
-    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d'):
-        try:
-            return datetime.strptime(s, fmt).date()
-        except ValueError:
-            continue
-    raise ValueError(f'Cannot parse date: {s}')
 
 # ── Template Filters ──────────────────────────────────────────────────────────
 
