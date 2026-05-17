@@ -1,6 +1,7 @@
 import os
 import csv
 import io
+import concurrent.futures
 from datetime import date, datetime, timedelta
 from functools import wraps
 
@@ -97,38 +98,20 @@ def logout():
 
 @app.route('/debug/prices')
 def debug_prices():
-    import traceback, time
-    out = {}
-
-    # Test 1: Ticker.fast_info (single symbol)
+    import time
+    out = {'finnhub_key_set': bool(FINNHUB_KEY)}
     t0 = time.time()
     try:
-        out['ticker_AAPL'] = round(float(yf.Ticker('AAPL').fast_info.last_price), 4)
+        aapl = _finnhub_quote('AAPL')
+        out['AAPL'] = aapl
     except Exception as e:
-        out['ticker_AAPL'] = f'ERROR: {e}'
-    out['ticker_elapsed_s'] = round(time.time() - t0, 2)
-
-    # Test 2a: yf.download no auto_adjust
-    t1 = time.time()
+        out['AAPL_error'] = str(e)
     try:
-        raw = yf.download(['AAPL', 'MSFT'], period='5d', progress=False, threads=True)
-        closes = raw['Close']
-        out['dl_rows'] = int(closes['AAPL'].dropna().shape[0])
-        out['dl_AAPL'] = round(float(closes['AAPL'].dropna().iloc[-1]), 4) if out['dl_rows'] else 'EMPTY'
+        rate = _finnhub_usdthb()
+        out['USDTHB'] = rate
     except Exception as e:
-        out['dl_error'] = repr(e)
-    out['dl_elapsed_s'] = round(time.time() - t1, 2)
-
-    # Test 2b: Ticker.history (different API path)
-    t2 = time.time()
-    try:
-        h = yf.Ticker('AAPL').history(period='5d')
-        out['hist_rows'] = len(h)
-        out['hist_AAPL'] = round(float(h['Close'].iloc[-1]), 4) if len(h) else 'EMPTY'
-    except Exception as e:
-        out['hist_error'] = repr(e)
-    out['hist_elapsed_s'] = round(time.time() - t2, 2)
-
+        out['USDTHB_error'] = str(e)
+    out['elapsed_s'] = round(time.time() - t0, 2)
     return jsonify(out)
 
 
@@ -141,7 +124,48 @@ def health():
 
 # ── Exchange Rate ─────────────────────────────────────────────────────────────
 
+FINNHUB_KEY = os.environ.get('FINNHUB_KEY', '')
+FINNHUB_URL = 'https://finnhub.io/api/v1'
+
+
+def _finnhub_quote(symbol):
+    """Fetch a single stock quote from Finnhub. Returns price or None."""
+    try:
+        r = requests.get(f'{FINNHUB_URL}/quote',
+                         params={'symbol': symbol, 'token': FINNHUB_KEY},
+                         timeout=8)
+        price = r.json().get('c')
+        return round(float(price), 4) if price else None
+    except Exception:
+        return None
+
+
+def _finnhub_usdthb():
+    """Fetch current USDTHB rate from open.er-api.com (no key required)."""
+    try:
+        r = requests.get('https://open.er-api.com/v6/latest/USD', timeout=8)
+        thb = r.json().get('rates', {}).get('THB')
+        return round(float(thb), 4) if thb else None
+    except Exception:
+        return None
+
+
+def fetch_all_prices(symbols):
+    """Batch-fetch prices for all symbols + USDTHB via Finnhub (parallel)."""
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        stock_futures = {ex.submit(_finnhub_quote, s): s for s in symbols}
+        rate_future   = ex.submit(_finnhub_usdthb)
+        for f, sym in stock_futures.items():
+            price = f.result()
+            if price:
+                results[sym] = price
+        results['__USDTHB__'] = rate_future.result()
+    return results
+
+
 def get_usdthb_rate(for_date=None):
+    """Historical rate via yfinance (local pipeline only, not called on Railway)."""
     try:
         ticker = yf.Ticker('USDTHB=X')
         if for_date:
@@ -358,44 +382,34 @@ def refresh_prices():
     _, positions = compute_gains(txs, get_settings().cost_basis_method)
     symbols = [s for s, lots in positions.items() if sum(l['qty'] for l in lots) > 0.0001]
 
-    now     = datetime.utcnow()
-    fetched = 0
-    rate    = None
+    if not FINNHUB_KEY:
+        flash('FINNHUB_KEY not set — add it to Railway environment variables.', 'danger')
+        return redirect(url_for('dashboard'))
 
+    now = datetime.utcnow()
     try:
-        # yfinance requires BRK-B not BRK.B
-        yf_map  = {s.replace('.', '-'): s for s in symbols}
-        yf_syms = list(yf_map.keys())
-
-        raw = yf.download(yf_syms, period='5d', progress=False,
-                          auto_adjust=True, threads=True)
-        # yfinance may return MultiIndex columns — normalise to flat {sym: Series}
-        closes = raw['Close']
-        if hasattr(closes.columns, 'levels'):
-            closes = closes  # MultiIndex: closes[sym] still works
-        for yfsym, orig in yf_map.items():
-            try:
-                price = round(float(closes[yfsym].dropna().iloc[-1]), 4)
-                entry = db.session.get(PriceCache, orig) or PriceCache(symbol=orig)
-                entry.price_usd  = price
-                entry.fetched_at = now
-                db.session.merge(entry)
-                fetched += 1
-            except Exception:
-                pass
-
-        rate = get_usdthb_rate()
-        if rate:
-            entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
-            entry.price_usd  = rate
-            entry.fetched_at = now
-            db.session.merge(entry)
-
-        db.session.commit()
+        prices = fetch_all_prices(symbols)
     except Exception as e:
         flash(f'Price fetch failed: {e}', 'danger')
         return redirect(url_for('dashboard'))
 
+    fetched = 0
+    rate = prices.pop('__USDTHB__', None)
+
+    if rate:
+        entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
+        entry.price_usd  = rate
+        entry.fetched_at = now
+        db.session.merge(entry)
+
+    for sym, price in prices.items():
+        entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
+        entry.price_usd  = price
+        entry.fetched_at = now
+        db.session.merge(entry)
+        fetched += 1
+
+    db.session.commit()
     rate_str = f'฿{rate:.2f}' if rate else '—'
     flash(f'Prices updated for {fetched}/{len(symbols)} symbols · 1 USD = {rate_str}', 'success')
     return redirect(url_for('dashboard'))
