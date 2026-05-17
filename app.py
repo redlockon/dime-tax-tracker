@@ -108,19 +108,26 @@ def debug_prices():
         out['ticker_AAPL'] = f'ERROR: {e}'
     out['ticker_elapsed_s'] = round(time.time() - t0, 2)
 
-    # Test 2: yf.download with period='5d' (works on weekends)
+    # Test 2a: yf.download no auto_adjust
     t1 = time.time()
     try:
-        raw = yf.download(['AAPL', 'MSFT'], period='5d', progress=False,
-                          auto_adjust=True, threads=True)
+        raw = yf.download(['AAPL', 'MSFT'], period='5d', progress=False, threads=True)
         closes = raw['Close']
-        out['download_AAPL'] = round(float(closes['AAPL'].dropna().iloc[-1]), 4)
-        out['download_MSFT'] = round(float(closes['MSFT'].dropna().iloc[-1]), 4)
-        out['download_rows']  = len(closes.dropna())
+        out['dl_rows'] = int(closes['AAPL'].dropna().shape[0])
+        out['dl_AAPL'] = round(float(closes['AAPL'].dropna().iloc[-1]), 4) if out['dl_rows'] else 'EMPTY'
     except Exception as e:
-        out['download_error'] = repr(e)
-        out['download_raw_cols'] = str(raw.columns.tolist()[:6])
-    out['download_elapsed_s'] = round(time.time() - t1, 2)
+        out['dl_error'] = repr(e)
+    out['dl_elapsed_s'] = round(time.time() - t1, 2)
+
+    # Test 2b: Ticker.history (different API path)
+    t2 = time.time()
+    try:
+        h = yf.Ticker('AAPL').history(period='5d')
+        out['hist_rows'] = len(h)
+        out['hist_AAPL'] = round(float(h['Close'].iloc[-1]), 4) if len(h) else 'EMPTY'
+    except Exception as e:
+        out['hist_error'] = repr(e)
+    out['hist_elapsed_s'] = round(time.time() - t2, 2)
 
     return jsonify(out)
 
