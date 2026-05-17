@@ -1,10 +1,10 @@
 import os
 import csv
 import io
-import threading
 from datetime import date, datetime, timedelta
 from functools import wraps
 
+import requests
 from flask import (Flask, render_template, request, redirect,
                    url_for, session, flash, jsonify, Response)
 from flask_sqlalchemy import SQLAlchemy
@@ -104,16 +104,29 @@ def health():
 
 # ── Exchange Rate ─────────────────────────────────────────────────────────────
 
+_YF_HEADERS = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+
+def fetch_quotes(symbols):
+    """Single Yahoo Finance API call → {symbol: price}. Fast, no yfinance overhead."""
+    url = 'https://query2.finance.yahoo.com/v7/finance/quote'
+    r = requests.get(url, params={'symbols': ','.join(symbols)},
+                     headers=_YF_HEADERS, timeout=10)
+    r.raise_for_status()
+    return {q['symbol']: round(q['regularMarketPrice'], 4)
+            for q in r.json()['quoteResponse']['result']
+            if 'regularMarketPrice' in q}
+
+
 def get_usdthb_rate(for_date=None):
     try:
-        ticker = yf.Ticker('USDTHB=X')
         if for_date:
+            ticker = yf.Ticker('USDTHB=X')
             d = for_date if isinstance(for_date, date) else for_date.date()
             end = d + timedelta(days=5)
             hist = ticker.history(start=d.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
             if not hist.empty:
                 return round(float(hist['Close'].iloc[0]), 4)
-        return round(float(ticker.fast_info.last_price), 4)
+        return fetch_quotes(['USDTHB=X']).get('USDTHB=X')
     except Exception:
         return None
 
@@ -312,36 +325,6 @@ def dashboard():
     )
 
 
-def _do_refresh_prices(app_ctx, symbols):
-    with app_ctx:
-        now = datetime.utcnow()
-        rate = get_usdthb_rate()
-        if rate:
-            entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
-            entry.price_usd  = rate
-            entry.fetched_at = now
-            db.session.merge(entry)
-
-        if symbols:
-            try:
-                raw    = yf.download(' '.join(symbols), period='2d',
-                                     progress=False, auto_adjust=True, threads=True)
-                closes = raw['Close'] if len(symbols) > 1 else raw['Close'].rename(symbols[0])
-                for sym in symbols:
-                    try:
-                        price = round(float(closes[sym].dropna().iloc[-1]), 4)
-                        entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
-                        entry.price_usd  = price
-                        entry.fetched_at = now
-                        db.session.merge(entry)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        db.session.commit()
-
-
 @app.route('/api/refresh-prices', methods=['POST'])
 @login_required
 def refresh_prices():
@@ -351,13 +334,34 @@ def refresh_prices():
     _, positions = compute_gains(txs, get_settings().cost_basis_method)
     symbols = [s for s, lots in positions.items() if sum(l['qty'] for l in lots) > 0.0001]
 
-    threading.Thread(
-        target=_do_refresh_prices,
-        args=(app.app_context(), symbols),
-        daemon=True,
-    ).start()
+    now     = datetime.utcnow()
+    fetched = 0
+    rate    = None
 
-    flash(f'Refreshing {len(symbols)} symbols in the background — reload in a few seconds.', 'info')
+    try:
+        all_quotes = fetch_quotes(symbols + ['USDTHB=X'])
+        rate = all_quotes.pop('USDTHB=X', None)
+
+        if rate:
+            entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
+            entry.price_usd  = rate
+            entry.fetched_at = now
+            db.session.merge(entry)
+
+        for sym, price in all_quotes.items():
+            entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
+            entry.price_usd  = price
+            entry.fetched_at = now
+            db.session.merge(entry)
+            fetched += 1
+
+        db.session.commit()
+    except Exception as e:
+        flash(f'Price fetch failed: {e}', 'danger')
+        return redirect(url_for('dashboard'))
+
+    rate_str = f'฿{rate:.2f}' if rate else '—'
+    flash(f'Prices updated for {fetched}/{len(symbols)} symbols · 1 USD = {rate_str}', 'success')
     return redirect(url_for('dashboard'))
 
 # ── Transactions ──────────────────────────────────────────────────────────────
