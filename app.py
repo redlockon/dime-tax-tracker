@@ -98,20 +98,30 @@ def logout():
 @app.route('/debug/prices')
 def debug_prices():
     import traceback, time
-    results = {}
-    start = time.time()
+    out = {}
+
+    # Test 1: Ticker.fast_info (single symbol)
+    t0 = time.time()
     try:
-        raw = yf.download('AAPL USDTHB=X', period='2d', progress=False,
-                          auto_adjust=True, threads=True)
-        for sym in ['AAPL', 'USDTHB=X']:
-            try:
-                results[sym] = round(float(raw['Close'][sym].dropna().iloc[-1]), 4)
-            except Exception as e:
-                results[sym] = f'ERROR: {e}'
+        out['ticker_AAPL'] = round(float(yf.Ticker('AAPL').fast_info.last_price), 4)
     except Exception as e:
-        results['__download__'] = f'FAILED: {traceback.format_exc()}'
-    results['elapsed_s'] = round(time.time() - start, 2)
-    return jsonify(results)
+        out['ticker_AAPL'] = f'ERROR: {e}'
+    out['ticker_elapsed_s'] = round(time.time() - t0, 2)
+
+    # Test 2: yf.download with a LIST (not string)
+    t1 = time.time()
+    try:
+        raw = yf.download(['AAPL', 'MSFT'], period='2d', progress=False,
+                          auto_adjust=True, threads=True)
+        closes = raw['Close']
+        out['download_AAPL'] = round(float(closes['AAPL'].dropna().iloc[-1]), 4)
+        out['download_MSFT'] = round(float(closes['MSFT'].dropna().iloc[-1]), 4)
+    except Exception as e:
+        out['download_error'] = repr(e)
+        out['download_raw_cols'] = str(getattr(raw, 'columns', 'N/A'))
+    out['download_elapsed_s'] = round(time.time() - t1, 2)
+
+    return jsonify(out)
 
 
 @app.route('/health')
