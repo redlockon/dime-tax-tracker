@@ -1,6 +1,7 @@
 import os
 import csv
 import io
+import threading
 from datetime import date, datetime, timedelta
 from functools import wraps
 
@@ -311,6 +312,36 @@ def dashboard():
     )
 
 
+def _do_refresh_prices(app_ctx, symbols):
+    with app_ctx:
+        now = datetime.utcnow()
+        rate = get_usdthb_rate()
+        if rate:
+            entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
+            entry.price_usd  = rate
+            entry.fetched_at = now
+            db.session.merge(entry)
+
+        if symbols:
+            try:
+                raw    = yf.download(' '.join(symbols), period='2d',
+                                     progress=False, auto_adjust=True, threads=True)
+                closes = raw['Close'] if len(symbols) > 1 else raw['Close'].rename(symbols[0])
+                for sym in symbols:
+                    try:
+                        price = round(float(closes[sym].dropna().iloc[-1]), 4)
+                        entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
+                        entry.price_usd  = price
+                        entry.fetched_at = now
+                        db.session.merge(entry)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        db.session.commit()
+
+
 @app.route('/api/refresh-prices', methods=['POST'])
 @login_required
 def refresh_prices():
@@ -320,40 +351,13 @@ def refresh_prices():
     _, positions = compute_gains(txs, get_settings().cost_basis_method)
     symbols = [s for s, lots in positions.items() if sum(l['qty'] for l in lots) > 0.0001]
 
-    now  = datetime.utcnow()
-    fetched = 0
+    threading.Thread(
+        target=_do_refresh_prices,
+        args=(app.app_context(), symbols),
+        daemon=True,
+    ).start()
 
-    # Batch-fetch all stock prices + USDTHB in two yfinance calls
-    rate = get_usdthb_rate()
-    if rate:
-        entry = db.session.get(PriceCache, '__USDTHB__') or PriceCache(symbol='__USDTHB__')
-        entry.price_usd  = rate
-        entry.fetched_at = now
-        db.session.merge(entry)
-
-    if symbols:
-        try:
-            raw = yf.download(
-                ' '.join(symbols), period='2d',
-                progress=False, auto_adjust=True, threads=True,
-            )
-            closes = raw['Close'] if len(symbols) > 1 else raw['Close'].rename(symbols[0])
-            for sym in symbols:
-                try:
-                    price = round(float(closes[sym].dropna().iloc[-1]), 4)
-                    entry = db.session.get(PriceCache, sym) or PriceCache(symbol=sym)
-                    entry.price_usd  = price
-                    entry.fetched_at = now
-                    db.session.merge(entry)
-                    fetched += 1
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    db.session.commit()
-    rate_str = f'฿{rate:.2f}' if rate else '—'
-    flash(f'Prices refreshed for {fetched}/{len(symbols)} symbols · 1 USD = {rate_str}', 'success')
+    flash(f'Refreshing {len(symbols)} symbols in the background — reload in a few seconds.', 'info')
     return redirect(url_for('dashboard'))
 
 # ── Transactions ──────────────────────────────────────────────────────────────
