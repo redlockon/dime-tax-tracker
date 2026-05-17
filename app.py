@@ -95,6 +95,25 @@ def logout():
     return redirect(url_for('login'))
 
 
+@app.route('/debug/prices')
+def debug_prices():
+    import traceback, time
+    results = {}
+    start = time.time()
+    try:
+        raw = yf.download('AAPL USDTHB=X', period='2d', progress=False,
+                          auto_adjust=True, threads=True)
+        for sym in ['AAPL', 'USDTHB=X']:
+            try:
+                results[sym] = round(float(raw['Close'][sym].dropna().iloc[-1]), 4)
+            except Exception as e:
+                results[sym] = f'ERROR: {e}'
+    except Exception as e:
+        results['__download__'] = f'FAILED: {traceback.format_exc()}'
+    results['elapsed_s'] = round(time.time() - start, 2)
+    return jsonify(results)
+
+
 @app.route('/health')
 def health():
     count = Transaction.query.count()
