@@ -108,17 +108,18 @@ def debug_prices():
         out['ticker_AAPL'] = f'ERROR: {e}'
     out['ticker_elapsed_s'] = round(time.time() - t0, 2)
 
-    # Test 2: yf.download with a LIST (not string)
+    # Test 2: yf.download with period='5d' (works on weekends)
     t1 = time.time()
     try:
-        raw = yf.download(['AAPL', 'MSFT'], period='2d', progress=False,
+        raw = yf.download(['AAPL', 'MSFT'], period='5d', progress=False,
                           auto_adjust=True, threads=True)
         closes = raw['Close']
         out['download_AAPL'] = round(float(closes['AAPL'].dropna().iloc[-1]), 4)
         out['download_MSFT'] = round(float(closes['MSFT'].dropna().iloc[-1]), 4)
+        out['download_rows']  = len(closes.dropna())
     except Exception as e:
         out['download_error'] = repr(e)
-        out['download_raw_cols'] = str(getattr(raw, 'columns', 'N/A'))
+        out['download_raw_cols'] = str(raw.columns.tolist()[:6])
     out['download_elapsed_s'] = round(time.time() - t1, 2)
 
     return jsonify(out)
@@ -359,10 +360,12 @@ def refresh_prices():
         yf_map  = {s.replace('.', '-'): s for s in symbols}
         yf_syms = list(yf_map.keys())
 
-        raw    = yf.download(yf_syms, period='2d', progress=False,
-                             auto_adjust=True, threads=True)
-        closes = raw['Close'] if len(yf_syms) > 1 else raw['Close'].rename(yf_syms[0])
-
+        raw = yf.download(yf_syms, period='5d', progress=False,
+                          auto_adjust=True, threads=True)
+        # yfinance may return MultiIndex columns — normalise to flat {sym: Series}
+        closes = raw['Close']
+        if hasattr(closes.columns, 'levels'):
+            closes = closes  # MultiIndex: closes[sym] still works
         for yfsym, orig in yf_map.items():
             try:
                 price = round(float(closes[yfsym].dropna().iloc[-1]), 4)
